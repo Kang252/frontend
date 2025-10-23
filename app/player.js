@@ -9,7 +9,7 @@ import { useFavorites } from '../src/context/FavoritesContext';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import AddToPlaylistModal from '../src/components/AddToPlaylistModal';
 
-// --- (Lyrics Parsing Logic - Unchanged) ---
+// --- Logic phân tích Lời bài hát ---
 const parseLRC = (lrcString) => {
   if (!lrcString) return [];
   const lines = lrcString.split('\n');
@@ -32,38 +32,31 @@ const parseLRC = (lrcString) => {
   return parsed;
 };
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-// --- (End Lyrics Logic) ---
+// --- Kết thúc Logic Lời bài hát ---
 
 
 export default function PlayerScreen() {
   const navigation = useNavigation();
   const [isModalVisible, setIsModalVisible] = useState(false);
 
-  // Get isLoading from context
+  // Lấy state và hàm (Đã bỏ volume)
   const {
     currentSong, isPlaying, positionMillis, durationMillis,
     handlePlayPause, seekTo, playNext, playPrevious, formatTime,
     repeatMode, isShuffle, toggleRepeatMode, toggleShuffle,
-    volume, setAudioVolume,
+    // volume, setAudioVolume, // <-- Đã bỏ
     sleepTimerId, setSleepTimer, clearSleepTimer,
-    isLoading, // Get isLoading
+    isLoading,
   } = useAudioPlayer();
 
   const { addFavorite, removeFavorite, isFavorite } = useFavorites();
 
-  // Slider States
+  // --- Slider States ---
   const [isSeeking, setIsSeeking] = useState(false);
-  const [seekPosition, setSeekPosition] = useState(0);
-  const [localVolume, setLocalVolume] = useState(volume);
-  const [isAdjustingVolume, setIsAdjustingVolume] = useState(false);
+  const [seekPosition, setSeekPosition] = useState(0); // Vị trí hiển thị khi đang kéo
+  // const [isAdjustingVolume, setIsAdjustingVolume] = useState(false); // <-- Đã bỏ
 
-  useEffect(() => {
-    if (!isAdjustingVolume) {
-      setLocalVolume(volume);
-    }
-  }, [volume, isAdjustingVolume]);
-
-  // Lyrics Logic
+  // --- Lyrics Logic ---
   const flatListRef = useRef(null);
   const lyricsLines = useMemo(() => {
     return parseLRC(currentSong?.lyrics);
@@ -80,25 +73,28 @@ export default function PlayerScreen() {
       }
     }
     if (newIndex !== currentLineIndex) {
-      setCurrentLineIndex(newIndex);
+        setCurrentLineIndex(newIndex);
     }
-  }, [positionMillis, lyricsLines, currentLineIndex]);
+    // Cập nhật seekPosition khi KHÔNG đang kéo slider
+    if (!isSeeking) {
+        setSeekPosition(positionMillis);
+    }
+  }, [positionMillis, lyricsLines, currentLineIndex, isSeeking]);
 
   useEffect(() => {
-    if (flatListRef.current && currentLineIndex !== -1 && lyricsLines.length > 0 && !isSeeking && !isAdjustingVolume) {
+    // Chỉ cuộn khi không kéo slider thời lượng
+    if (flatListRef.current && currentLineIndex !== -1 && lyricsLines.length > 0 && !isSeeking) {
       flatListRef.current.scrollToIndex({
-        index: currentLineIndex,
-        animated: true,
-        viewPosition: 0.5,
-        viewOffset: -SCREEN_HEIGHT * 0.1
+        index: currentLineIndex, animated: true, viewPosition: 0.5, viewOffset: -SCREEN_HEIGHT * 0.1
       });
     }
-  }, [currentLineIndex, lyricsLines, isSeeking, isAdjustingVolume]);
+  }, [currentLineIndex, lyricsLines, isSeeking]);
+
 
   // --- Render logic ---
 
-  // Check for loading or no song
-  if (isLoading || !currentSong) {
+  // Kiểm tra isLoading / !currentSong
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
@@ -107,19 +103,33 @@ export default function PlayerScreen() {
           </Pressable>
         </View>
         <View style={[styles.content, styles.centerContent]}>
-          {isLoading ? (
-            <ActivityIndicator size="large" color="#1DB954" />
-          ) : (
-            <Text style={styles.title}>Chưa chọn bài hát</Text>
-          )}
+          <ActivityIndicator size="large" color="#1DB954" />
         </View>
       </SafeAreaView>
     );
   }
 
+  if (!currentSong) {
+      return (
+          <SafeAreaView style={styles.container}>
+              <View style={styles.header}>
+                  <Pressable onPress={() => navigation.goBack()} style={styles.iconButton}>
+                      <Ionicons name="chevron-down" size={28} color="white" />
+                  </Pressable>
+              </View>
+              <View style={[styles.content, styles.centerContent]}>
+                  <Text style={styles.title}>Chưa chọn bài hát</Text>
+              </View>
+          </SafeAreaView>
+      );
+  }
+
   // --- Event Handlers ---
-  const songIsFavorited = isFavorite(currentSong.id);
-  const handleToggleFavorite = () => { if (songIsFavorited) removeFavorite(currentSong.id); else addFavorite(currentSong.id); };
+  const songIsFavorited = currentSong ? isFavorite(currentSong.id) : false;
+  const handleToggleFavorite = () => {
+      if (!currentSong) return;
+      if (songIsFavorited) removeFavorite(currentSong.id); else addFavorite(currentSong.id);
+  };
   const showSleepTimerOptions = () => {
     Alert.alert(
       "Hẹn giờ tắt nhạc", "Tự động tắt nhạc sau:",
@@ -129,24 +139,34 @@ export default function PlayerScreen() {
         { text: "1 giờ", onPress: () => setSleepTimer(60) },
         sleepTimerId && { text: "Tắt hẹn giờ", onPress: clearSleepTimer, style: "destructive" },
         { text: "Hủy", style: "cancel" }
-      ].filter(Boolean), // Filter out null/undefined options
+      ].filter(Boolean),
       { cancelable: true }
     );
   };
-  const onSeekStart = () => { setIsSeeking(true); };
-  const onSeekChange = (value) => { setSeekPosition(value); };
-  const onSeekComplete = (value) => { setIsSeeking(false); seekTo(value); };
-  const onVolumeStart = () => { setIsAdjustingVolume(true); };
-  const onVolumeChange = (value) => { setLocalVolume(value); };
-  const onVolumeComplete = (value) => { setIsAdjustingVolume(false); setAudioVolume(value); };
+  const onSeekStart = () => {
+    console.log("Seek Start");
+    setIsSeeking(true);
+    setSeekPosition(positionMillis); // Đồng bộ vị trí bắt đầu kéo
+  };
+  const onSeekChange = (value) => {
+    setSeekPosition(value); // Cập nhật vị trí hiển thị khi kéo
+  };
+  const onSeekComplete = (value) => {
+    console.log("Seek Complete:", value);
+    setIsSeeking(false);
+    seekTo(value); // Gọi hàm tua nhạc khi thả tay
+  };
+  // const onVolumeStart = () => { /* Bỏ */ };
+  // const onVolumeChange = (value) => { /* Bỏ */ };
+  // const onVolumeComplete = (value) => { /* Bỏ */ };
   const handleScrollToIndexFailed = (info) => {
     console.warn(`Cannot scroll to index ${info.index}.`);
     const listRef = flatListRef.current;
     if (listRef) {
-      const offset = info.averageItemLength * info.index;
+      const offset = info.averageItemLength * info.index; // Ước lượng vị trí
       listRef.scrollToOffset({ offset, animated: true });
       setTimeout(() => {
-        if (flatListRef.current) { // Check ref again
+        if (flatListRef.current) { // Kiểm tra lại ref
           flatListRef.current.scrollToIndex({
             index: info.index, animated: true, viewPosition: 0.5, viewOffset: -SCREEN_HEIGHT * 0.1
           });
@@ -179,8 +199,23 @@ export default function PlayerScreen() {
       </View>
       {/* Progress Slider */}
       <View style={styles.progressContainer}>
-        <Slider style={styles.slider} minimumValue={0} maximumValue={durationMillis || 1} value={isSeeking ? seekPosition : positionMillis} minimumTrackTintColor="#1DB954" maximumTrackTintColor="#535353" thumbTintColor="#FFFFFF" onSlidingStart={onSeekStart} onValueChange={onSeekChange} onSlidingComplete={onSeekComplete} disabled={durationMillis === 0} />
-        <View style={styles.timeContainer}><Text style={styles.timeText}>{formatTime(isSeeking ? seekPosition : positionMillis)}</Text><Text style={styles.timeText}>{formatTime(durationMillis)}</Text></View>
+        <Slider
+          style={styles.slider}
+          minimumValue={0}
+          maximumValue={durationMillis || 1}
+          value={isSeeking ? seekPosition : positionMillis}
+          minimumTrackTintColor="#1DB954"
+          maximumTrackTintColor="#535353"
+          thumbTintColor="#FFFFFF"
+          onSlidingStart={onSeekStart}
+          onValueChange={onSeekChange} // Vẫn cần onValueChange để cập nhật seekPosition
+          onSlidingComplete={onSeekComplete}
+          disabled={durationMillis === 0}
+        />
+        <View style={styles.timeContainer}>
+            <Text style={styles.timeText}>{formatTime(isSeeking ? seekPosition : positionMillis)}</Text>
+            <Text style={styles.timeText}>{formatTime(durationMillis)}</Text>
+        </View>
       </View>
       {/* Controls */}
       <View style={styles.controlsContainer}>
@@ -190,12 +225,9 @@ export default function PlayerScreen() {
          <Pressable onPress={playNext} style={styles.iconButton}><Ionicons name="play-skip-forward" size={32} color="white" /></Pressable>
          <Pressable onPress={toggleRepeatMode} style={styles.iconButton}><MaterialIcons name={repeatMode === 'one' ? 'repeat-one' : 'repeat'} size={28} color={repeatMode !== 'off' ? "#1DB954" : "gray"} /></Pressable>
       </View>
-      {/* Volume Slider */}
-      <View style={styles.volumeContainer}>
-        <Ionicons name="volume-mute" size={24} color="gray" />
-        <Slider style={styles.volumeSlider} minimumValue={0} maximumValue={1} value={localVolume} minimumTrackTintColor="#1DB954" maximumTrackTintColor="#535353" thumbTintColor="#FFFFFF" onSlidingStart={onVolumeStart} onValueChange={onVolumeChange} onSlidingComplete={onVolumeComplete} />
-        <Ionicons name="volume-high" size={24} color="gray" />
-      </View>
+
+      {/* --- Khu vực Âm lượng đã bị loại bỏ --- */}
+
     </View>
   );
 
@@ -220,14 +252,18 @@ export default function PlayerScreen() {
         keyExtractor={(item, index) => `${item.time}-${index}`}
         ListFooterComponent={<View style={{ height: SCREEN_HEIGHT * 0.3 }} />}
         ListEmptyComponent={() => {
-          // Only show "No lyrics" if a song is actually loaded
           if (!isLoading && currentSong) {
             return <Text style={styles.line}>Không có lời bài hát cho bài này.</Text>;
           }
           return null;
         }}
-        scrollEnabled={!isSeeking && !isAdjustingVolume}
+        // Cập nhật scrollEnabled chỉ dựa vào isSeeking
+        scrollEnabled={!isSeeking}
         onScrollToIndexFailed={handleScrollToIndexFailed}
+        removeClippedSubviews={true}
+        initialNumToRender={10}
+        maxToRenderPerBatch={5}
+        windowSize={10}
       />
 
       {/* Modal */}
@@ -245,7 +281,7 @@ export default function PlayerScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#121212' },
   content: { alignItems: 'center', paddingHorizontal: 20 },
-  centerContent: { flex: 1, justifyContent: 'center', alignItems: 'center' }, // Added for loading/no song
+  centerContent: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, width: '100%' },
   image: { width: '100%', aspectRatio: 1, borderRadius: 8, marginBottom: 20 },
   infoContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 10 },
@@ -259,8 +295,8 @@ const styles = StyleSheet.create({
   timeText: { color: 'gray', fontSize: 12 },
   controlsContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginTop: 40, paddingHorizontal: 20, marginBottom: 30 },
   playButton: { justifyContent: 'center', alignItems: 'center' },
-  volumeContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingHorizontal: 20, marginTop: 10, marginBottom: 20 },
-  volumeSlider: { flex: 1, height: 40, marginHorizontal: 10 },
+  // volumeContainer: { /* Bỏ */ },
+  // volumeSlider: { /* Bỏ */ },
   line: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', paddingVertical: 15, marginHorizontal: 20 },
   inactiveLine: { color: 'gray', opacity: 0.7 },
   activeLine: { color: 'white', opacity: 1, transform: [{ scale: 1.05 }] },
