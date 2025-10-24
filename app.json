@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true, // Lưu ý: expo-av có thể không tương thích tốt với New Architecture. Nếu gặp lỗi lạ, thử đặt là false.
+    // "newArchEnabled": false, // <-- XÓA HOẶC COMMENT LẠI DÒNG NÀY
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -55,8 +55,7 @@
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
         }
       ]
-      // XÓA HOẶC COMMENT LẠI "expo-audio" NẾU CÒN
-      // "expo-audio"
+      // KHÔNG CÓ "expo-audio" ở đây
     ],
     "experiments": {
       "typedRoutes": true,
