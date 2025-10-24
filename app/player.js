@@ -39,26 +39,26 @@ export default function PlayerScreen() {
   const navigation = useNavigation();
   const [isModalVisible, setIsModalVisible] = useState(false);
 
-  // Lấy state và hàm (Đã bỏ volume)
+  // Lấy isLoading từ context
   const {
-    currentSong, isPlaying, positionMillis, durationMillis,
+    currentSong, // <-- Lấy object bài hát hiện tại
+    isPlaying, positionMillis, durationMillis,
     handlePlayPause, seekTo, playNext, playPrevious, formatTime,
     repeatMode, isShuffle, toggleRepeatMode, toggleShuffle,
-    // volume, setAudioVolume, // <-- Đã bỏ
     sleepTimerId, setSleepTimer, clearSleepTimer,
-    isLoading,
+    isLoading, // Lấy isLoading
   } = useAudioPlayer();
 
   const { addFavorite, removeFavorite, isFavorite } = useFavorites();
 
   // --- Slider States ---
   const [isSeeking, setIsSeeking] = useState(false);
-  const [seekPosition, setSeekPosition] = useState(0); // Vị trí hiển thị khi đang kéo
-  // const [isAdjustingVolume, setIsAdjustingVolume] = useState(false); // <-- Đã bỏ
+  const [seekPosition, setSeekPosition] = useState(0);
 
   // --- Lyrics Logic ---
   const flatListRef = useRef(null);
   const lyricsLines = useMemo(() => {
+    // Luôn trả về mảng, kể cả khi currentSong là null ban đầu
     return parseLRC(currentSong?.lyrics);
   }, [currentSong?.lyrics]);
   const [currentLineIndex, setCurrentLineIndex] = useState(-1);
@@ -72,14 +72,15 @@ export default function PlayerScreen() {
         break;
       }
     }
+    // Cập nhật state chỉ khi index thực sự thay đổi
     if (newIndex !== currentLineIndex) {
         setCurrentLineIndex(newIndex);
     }
-    // Cập nhật seekPosition khi KHÔNG đang kéo slider
+    // Cập nhật vị trí seekPosition khi KHÔNG đang kéo slider
     if (!isSeeking) {
         setSeekPosition(positionMillis);
     }
-  }, [positionMillis, lyricsLines, currentLineIndex, isSeeking]);
+  }, [positionMillis, lyricsLines, currentLineIndex, isSeeking]); // Thêm isSeeking
 
   useEffect(() => {
     // Chỉ cuộn khi không kéo slider thời lượng
@@ -93,7 +94,8 @@ export default function PlayerScreen() {
 
   // --- Render logic ---
 
-  // Kiểm tra isLoading / !currentSong
+  // --- CẬP NHẬT LOGIC KIỂM TRA LOADING/CHƯA CÓ BÀI HÁT ---
+  // Ưu tiên hiển thị Loading nếu đang tải
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -109,6 +111,7 @@ export default function PlayerScreen() {
     );
   }
 
+  // Nếu không loading VÀ không có bài hát, hiển thị "Chưa chọn bài hát"
   if (!currentSong) {
       return (
           <SafeAreaView style={styles.container}>
@@ -125,9 +128,10 @@ export default function PlayerScreen() {
   }
 
   // --- Event Handlers ---
+  // Kiểm tra currentSong tồn tại trước khi đọc id
   const songIsFavorited = currentSong ? isFavorite(currentSong.id) : false;
   const handleToggleFavorite = () => {
-      if (!currentSong) return;
+      if (!currentSong) return; // Thêm kiểm tra an toàn
       if (songIsFavorited) removeFavorite(currentSong.id); else addFavorite(currentSong.id);
   };
   const showSleepTimerOptions = () => {
@@ -139,7 +143,7 @@ export default function PlayerScreen() {
         { text: "1 giờ", onPress: () => setSleepTimer(60) },
         sleepTimerId && { text: "Tắt hẹn giờ", onPress: clearSleepTimer, style: "destructive" },
         { text: "Hủy", style: "cancel" }
-      ].filter(Boolean),
+      ].filter(Boolean), // Lọc ra các giá trị null/undefined
       { cancelable: true }
     );
   };
@@ -163,7 +167,10 @@ export default function PlayerScreen() {
     console.warn(`Cannot scroll to index ${info.index}.`);
     const listRef = flatListRef.current;
     if (listRef) {
-      const offset = info.averageItemLength * info.index; // Ước lượng vị trí
+      // Ước lượng vị trí dựa trên chiều cao trung bình (hoặc một giá trị cố định)
+      // averageItemLength có thể không đáng tin cậy nếu chiều cao dòng khác nhau nhiều
+      const averageItemHeight = 50; // Ước lượng chiều cao trung bình của một dòng lyric
+      const offset = averageItemHeight * info.index;
       listRef.scrollToOffset({ offset, animated: true });
       setTimeout(() => {
         if (flatListRef.current) { // Kiểm tra lại ref
@@ -189,8 +196,13 @@ export default function PlayerScreen() {
           <Ionicons name="moon-outline" size={24} color={sleepTimerId ? "#1DB954" : "white"} />
         </Pressable>
       </View>
-      {/* Image */}
-      <Image source={{ uri: currentSong.imageUrl }} style={styles.image} />
+      {/* Image (SỬA ĐƯỜNG DẪN REQUIRE)*/}
+      <Image
+        source={{ uri: currentSong.imageUrl }}
+        style={styles.image}
+        // Đi lên 1 cấp (từ app -> gốc), rồi vào assets
+        defaultSource={require('../assets/images/default-album-art.png')} // <-- ĐÃ SỬA
+      />
       {/* Info Container */}
       <View style={styles.infoContainer}>
          <Pressable onPress={() => setIsModalVisible(true)} style={styles.iconButton}><Ionicons name="add-circle-outline" size={28} color={"gray"} /></Pressable>
@@ -208,8 +220,8 @@ export default function PlayerScreen() {
           maximumTrackTintColor="#535353"
           thumbTintColor="#FFFFFF"
           onSlidingStart={onSeekStart}
-          onValueChange={onSeekChange} // Vẫn cần onValueChange để cập nhật seekPosition
-          onSlidingComplete={onSeekComplete}
+          onValueChange={onSeekChange} // Vẫn cần để cập nhật seekPosition
+          onSlidingComplete={onSeekComplete} // Gọi seekTo khi thả tay
           disabled={durationMillis === 0}
         />
         <View style={styles.timeContainer}>
@@ -252,6 +264,7 @@ export default function PlayerScreen() {
         keyExtractor={(item, index) => `${item.time}-${index}`}
         ListFooterComponent={<View style={{ height: SCREEN_HEIGHT * 0.3 }} />}
         ListEmptyComponent={() => {
+          // Chỉ hiển thị nếu không loading và có bài hát
           if (!isLoading && currentSong) {
             return <Text style={styles.line}>Không có lời bài hát cho bài này.</Text>;
           }
@@ -261,15 +274,19 @@ export default function PlayerScreen() {
         scrollEnabled={!isSeeking}
         onScrollToIndexFailed={handleScrollToIndexFailed}
         removeClippedSubviews={true}
-        initialNumToRender={10}
-        maxToRenderPerBatch={5}
-        windowSize={10}
+        initialNumToRender={15} // Tăng số lượng render ban đầu một chút
+        maxToRenderPerBatch={10} // Tăng số lượng render mỗi batch
+        windowSize={11}      // Giữ windowSize hợp lý
+        getItemLayout={(data, index) => ( // Cung cấp layout nếu chiều cao dòng cố định
+             {length: 50, offset: 50 * index, index} // Giả sử chiều cao dòng là 50
+        )}
       />
 
       {/* Modal */}
       <AddToPlaylistModal
         isVisible={isModalVisible}
         onClose={() => setIsModalVisible(false)}
+        // Kiểm tra currentSong trước khi truy cập id
         currentSongId={currentSong ? currentSong.id : null}
       />
     </SafeAreaView>
@@ -283,7 +300,7 @@ const styles = StyleSheet.create({
   content: { alignItems: 'center', paddingHorizontal: 20 },
   centerContent: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, width: '100%' },
-  image: { width: '100%', aspectRatio: 1, borderRadius: 8, marginBottom: 20 },
+  image: { width: '100%', aspectRatio: 1, borderRadius: 8, marginBottom: 20, backgroundColor: '#333' }, // Thêm màu nền
   infoContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: 10 },
   infoText: { flex: 1, marginHorizontal: 10 },
   iconButton: { padding: 10, justifyContent: 'center', alignItems: 'center' },
@@ -297,7 +314,7 @@ const styles = StyleSheet.create({
   playButton: { justifyContent: 'center', alignItems: 'center' },
   // volumeContainer: { /* Bỏ */ },
   // volumeSlider: { /* Bỏ */ },
-  line: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', paddingVertical: 15, marginHorizontal: 20 },
+  line: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', paddingVertical: 15, marginHorizontal: 20, height: 50 }, // Ước lượng chiều cao
   inactiveLine: { color: 'gray', opacity: 0.7 },
   activeLine: { color: 'white', opacity: 1, transform: [{ scale: 1.05 }] },
 });
