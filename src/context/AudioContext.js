@@ -1,419 +1,340 @@
-// frontend/src/context/AudioContext.js (PHIÊN BẢN DÙNG expo-av - Load file từ assets)
-import React, { createContext, useState, useEffect, useContext } from 'react';
-import { Audio } from 'expo-av'; // <-- Sử dụng expo-av
-import { Alert } from 'react-native';
-import { getMockSongs } from '../data/songs'; // <-- Lấy dữ liệu bài hát (chứa require path)
+// frontend/src/context/AudioContext.js
 
-// --- (Helper Functions: formatTime, shuffleArray - Unchanged) ---
-const formatTime = (millis) => {
-  if (!millis) return '00:00';
-  const totalSeconds = Math.floor(millis / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-};
-
-function shuffleArray(array) {
-  let currentIndex = array.length,  randomIndex;
-  while (currentIndex !== 0) {
-    randomIndex = Math.floor(Math.random() * currentIndex);
-    currentIndex--;
-    [array[currentIndex], array[randomIndex]] = [
-      array[randomIndex], array[currentIndex]];
-  }
-  return array;
-}
-// --- (End Helper Functions) ---
+import React, { createContext, useState, useEffect, useRef, useContext } from 'react';
+import { Audio } from 'expo-av';
+import { getMockSongs } from '../data/songs'; // Đảm bảo import từ data
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const AudioContext = createContext();
 
+const SONG_LIST = getMockSongs(); // Lấy danh sách bài hát tĩnh
+
 export const AudioProvider = ({ children }) => {
-  // --- States ---
-  const [sound, setSound] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false); // State chính cho Play/Pause
-  const [positionMillis, setPositionMillis] = useState(0);
-  const [durationMillis, setDurationMillis] = useState(0);
-  const [songList, setSongList] = useState([]);
-  const [currentSongIndex, setCurrentSongIndex] = useState(null);
-  const [currentSong, setCurrentSong] = useState(null); // State cho object bài hát hiện tại
-  const [repeatMode, setRepeatMode] = useState('off');
-  const [isShuffle, setIsShuffle] = useState(false);
-  const [playbackOrder, setPlaybackOrder] = useState([]); // Sẽ lưu index
-  const [sleepTimerId, setSleepTimerId] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+    const [sound, setSound] = useState(null);
+    const [currentSong, setCurrentSong] = useState(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [playbackStatus, setPlaybackStatus] = useState(null);
+    const [currentQueue, setCurrentQueue] = useState(SONG_LIST);
+    const [originalQueue, setOriginalQueue] = useState(SONG_LIST); // Để dành cho shuffle
+    const [isLoading, setIsLoading] = useState(false);
+    const [isShuffle, setIsShuffle] = useState(false);
+    const [repeatMode, setRepeatMode] = useState('off'); // 'off', 'one', 'all'
+    const [sleepTimerId, setSleepTimerId] = useState(null);
 
-  // --- Effects ---
-  useEffect(() => {
-    const songs = getMockSongs();
-    setSongList(songs);
-    setPlaybackOrder(songs.map((_, index) => index));
-  }, []);
-
-  useEffect(() => {
-    if (songList.length === 0) return;
-    let newOrderIndex = songList.map((_, index) => index); // Dùng index
-    if (isShuffle) {
-      if (currentSongIndex !== null) {
-        newOrderIndex.splice(currentSongIndex, 1);
-        newOrderIndex = shuffleArray(newOrderIndex);
-        newOrderIndex.unshift(currentSongIndex);
-      } else {
-        newOrderIndex = shuffleArray(newOrderIndex);
-      }
-    }
-    setPlaybackOrder(newOrderIndex);
-  }, [isShuffle, songList, currentSongIndex]); // Dùng currentSongIndex
-
-  // Cập nhật state currentSong khi index hoặc list thay đổi
-  useEffect(() => {
-    if (currentSongIndex !== null && songList.length > 0 && currentSongIndex < songList.length) {
-      setCurrentSong(songList[currentSongIndex]);
-    } else {
-      setCurrentSong(null); // Reset nếu index không hợp lệ
-    }
-  }, [currentSongIndex, songList]); // Phụ thuộc vào index và songList
-
-
-  useEffect(() => {
-    // Cleanup function
-    return () => {
-      if (sound) {
-        console.log('Unloading sound on context unmount');
-        sound.getStatusAsync() // Check status before unloading
-         .then(status => {
-            if (status.isLoaded) {
-              sound.setOnPlaybackStatusUpdate(null); // Remove listener first
-              sound.unloadAsync().catch(e => console.error("Error unloading sound during cleanup:", e));
+    const isPlayerLoading = useRef(false); // Ref để tránh load chồng chéo
+    
+    // Hàm tải trạng thái (ví dụ)
+    useEffect(() => {
+        const loadInitialState = async () => {
+            try {
+                const savedSong = await AsyncStorage.getItem('lastPlayedSong');
+                if (savedSong) {
+                    setCurrentSong(JSON.parse(savedSong));
+                }
+                const savedShuffle = await AsyncStorage.getItem('shuffleState');
+                if (savedShuffle) {
+                    setIsShuffle(JSON.parse(savedShuffle));
+                }
+                 const savedRepeat = await AsyncStorage.getItem('repeatMode');
+                if (savedRepeat) {
+                    setRepeatMode(savedRepeat);
+                }
+            } catch (e) {
+                console.error("Lỗi tải trạng thái:", e);
             }
-         })
-         .catch(e => console.error("Error getting status during cleanup:", e));
-      }
-      if (sleepTimerId) {
-        clearTimeout(sleepTimerId);
-      }
-    };
-  }, [sound]); // Dependency on sound object
+        };
+        loadInitialState();
+        
+        // Cấu hình Audio session
+        Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: true,
+            staysActiveInBackground: true,
+            interruptionModeIOS: 1, // DO_NOT_MIX
+            interruptionModeAndroid: 1, // DO_NOT_MIX
+        });
 
+        return () => {
+            sound?.unloadAsync();
+        };
+    }, []);
 
-  // --- Audio Handling Functions ---
-  const onPlaybackStatusUpdate = async (status) => {
-    if (!sound) return; // Guard clause: Kiểm tra sound tồn tại
-
-    if (!status.isLoaded) {
-      // If the sound just finished AND it was NOT looping by hardware
-      if (status.didJustFinish && !status.isLooping) {
-        console.log("Track finished");
-        if (repeatMode !== 'one') { // Chỉ chuyển bài nếu không phải lặp 1 bài
-          playNext();
+    // Hàm lưu trạng thái
+    useEffect(() => {
+        if (currentSong) {
+            AsyncStorage.setItem('lastPlayedSong', JSON.stringify(currentSong));
         }
-        // Nếu repeatMode == 'one', isLooping=true sẽ tự động phát lại
-      } else if (status.error) {
-           console.error(`Player Error: ${status.error}`);
-           // Potentially unload or reset state here
-           setIsPlaying(false); // Cập nhật UI nếu có lỗi
-      } else {
-          // Các trường hợp khác (unloaded,...) -> có thể giữ nguyên isPlaying
-          // để tránh nhấp nháy UI không cần thiết
-      }
-      return;
-    }
-    // Cập nhật state nếu sound đã load thành công
-    setPositionMillis(status.positionMillis || 0);
-    setDurationMillis(status.durationMillis || 0);
-    // Cập nhật isPlaying TỪ STATUS để đảm bảo đồng bộ cuối cùng
-    setIsPlaying(status.isPlaying);
-  };
+    }, [currentSong]);
 
-  // Play Track (NHẬN INDEX, DÙNG require)
-  const playTrack = async (index) => {
-    console.log(`playTrack called with index: ${index}`);
-    if (typeof index !== 'number' || index < 0 || index >= songList.length) {
-      console.error('playTrack: Invalid index received.', index);
-      return; // Dừng nếu index không hợp lệ
-    }
+    useEffect(() => {
+        AsyncStorage.setItem('shuffleState', JSON.stringify(isShuffle));
+    }, [isShuffle]);
 
-    setIsLoading(true); // Bắt đầu loading
-    setIsPlaying(false); // Tạm đặt là false khi đang tải bài mới
-    setPositionMillis(0);
-    setDurationMillis(0);
-
-    // Lấy track object dựa trên index
-    const track = songList[index];
-    // --- KIỂM TRA trackUrl (giờ là giá trị require) ---
-    if (!track || !track.trackUrl) {
-        console.error("playTrack: Track data invalid or missing trackUrl (require path) for index:", index);
-        setIsPlaying(false);
-        setCurrentSongIndex(null); // Reset index nếu track không hợp lệ
-        // currentSong sẽ tự reset qua useEffect
-        setIsLoading(false);
-        return;
-    };
-
-    // Unload sound cũ một cách an toàn
-    if (sound) {
-      console.log('Unloading previous sound...');
-      try {
-        await sound.unloadAsync();
-        console.log('Previous sound unloaded.');
-      } catch (error) {
-        console.error("Error unloading previous sound:", error);
-      } finally {
-        setSound(null); // Luôn đặt sound về null sau khi unload
-      }
-    }
-
-    // Cập nhật index trước (sẽ kích hoạt useEffect cập nhật currentSong)
-    setCurrentSongIndex(index);
-
-    console.log('Attempting to create sound for:', track.title);
-    let newSound = null; // Khai báo trước để dùng trong catch/finally
-    try {
-      // Cấu hình audio mode (quan trọng cho background)
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false, playsInSilentModeIOS: true,
-        staysActiveInBackground: true, shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-
-      // Tạo và tải sound mới từ asset require()
-      const { sound: createdSound, status } = await Audio.Sound.createAsync(
-        track.trackUrl, // <-- Sử dụng trực tiếp giá trị require từ songs.js
-        {
-          shouldPlay: true, // Tự động phát sau khi tải
-          isLooping: repeatMode === 'one', // Cài đặt lặp lại 1 bài
-          // volume: 1.0, // Âm lượng mặc định
-        },
-        onPlaybackStatusUpdate // Đặt callback theo dõi trạng thái
-      );
-      newSound = createdSound; // Gán vào biến ngoài try
-
-      // Kiểm tra trạng thái ngay sau khi tạo
-      if (!status.isLoaded) {
-        throw new Error(`Failed to load sound: ${status.error || 'Unknown error'}`);
-      }
-      console.log('Sound loaded successfully. Initial status:', status);
-
-      // Cập nhật state thành công
-      setSound(newSound);
-      // Cập nhật state từ status trả về (chính xác hơn)
-      setPositionMillis(status.positionMillis || 0);
-      setDurationMillis(status.durationMillis || 0);
-      // Cập nhật isPlaying ngay dựa trên status ban đầu
-      setIsPlaying(status.isPlaying);
-
-    } catch (error) {
-      console.error('!!!!!!!!!! LỖI KHI TẢI HOẶC PHÁT BÀI HÁT !!!!!!!!!!', error);
-      // Reset state khi có lỗi
-      setIsPlaying(false);
-      // Giữ lại index nhưng reset sound
-      setSound(null);
-      // setCurrentSong(null); // useEffect sẽ xử lý
-      Alert.alert(`Lỗi phát nhạc`, `Không thể phát bài hát "${track.title}". File có thể bị lỗi hoặc không tìm thấy.`);
-    } finally {
-      // Dù thành công hay thất bại, đặt isLoading thành false
-      setIsLoading(false);
-    }
-  };
-
-  // --- Control Functions ---
-  const handlePlayPause = async () => {
-      if (!sound || isLoading) { // Thêm kiểm tra isLoading
-          console.warn("handlePlayPause: sound is null or currently loading.");
-          return;
-      }
-      try {
-          const status = await sound.getStatusAsync();
-          if (status.isLoaded) {
-              if (status.isPlaying) { // Dùng status.isPlaying thay vì state isPlaying
-                  console.log("Pausing...");
-                  await sound.pauseAsync();
-              } else {
-                  if (!status.didJustFinish) {
-                      console.log("Playing...");
-                      await sound.playAsync();
-                  } else {
-                      console.log("Replaying from start...");
-                      await sound.replayAsync({ shouldPlay: true });
-                  }
-              }
-              // KHÔNG đặt setIsPlaying ở đây, chờ callback cập nhật
-          } else { console.warn("handlePlayPause: Sound not loaded."); }
-      }
-      catch (error) { console.error("Error handling play/pause:", error); }
-  };
-
-  // --- HÀM seekTo ĐÃ ĐƯỢC LÀM CHẶT CHẼ HƠN ---
-  const seekTo = async (value) => {
-      // 1. Kiểm tra sound tồn tại ngay từ đầu
-      if (!sound) {
-          console.warn("seekTo: sound is null. Cannot seek.");
-          return;
-      }
-
-      // 2. Kiểm tra và làm sạch giá trị đầu vào
-      let seekMillis = Math.floor(value); // Chuyển thành số nguyên
-      if (isNaN(seekMillis) || seekMillis < 0) {
-          console.warn(`seekTo: Invalid seek value received: ${value}. Seeking to 0.`);
-          seekMillis = 0;
-      }
-
-      console.log(`Attempting to seek to: ${seekMillis}ms`);
-
-      try {
-           // 3. Lấy status MỚI NHẤT trước khi tua
-           const status = await sound.getStatusAsync();
-
-           // 4. Kiểm tra sound đã load CHƯA
-           if (!status || !status.isLoaded) {
-               console.warn("seekTo: Sound is not loaded. Cannot seek.");
-               return; // Không thể tua nếu chưa load
-           }
-
-           // Log trạng thái trước khi tua
-           console.log('Status before seek:', status);
-
-           // 5. Kiểm tra giá trị tua có hợp lệ so với duration không
-           const duration = status.durationMillis;
-           let targetMillis = seekMillis;
-           if (duration) { // Chỉ kiểm tra nếu duration tồn tại
-               // Giới hạn giá trị tua không vượt quá duration (trừ 1ms để an toàn)
-               targetMillis = Math.min(seekMillis, duration - 1);
-               targetMillis = Math.max(0, targetMillis); // Đảm bảo không âm
-           } else {
-               // Nếu không có duration, vẫn thử tua nhưng cảnh báo
-               console.warn("seekTo: Duration is unknown, seeking might be inaccurate.");
-               targetMillis = Math.max(0, seekMillis); // Đảm bảo không âm
-           }
+     useEffect(() => {
+        AsyncStorage.setItem('repeatMode', repeatMode);
+    }, [repeatMode]);
 
 
-           console.log(`Seeking sound object to actual value: ${targetMillis}ms`);
-           // 6. Thực hiện tua nhạc
-           await sound.setPositionAsync(targetMillis);
-           console.log("Seek successful (setPositionAsync called). Status update will follow.");
-           // KHÔNG cập nhật positionMillis thủ công ở đây. Hãy để onPlaybackStatusUpdate làm việc đó.
+    // --- Cập nhật hàm playSong ---
+    const playSong = async (song, queue = null) => {
+        if (isPlayerLoading.current) return; // Không làm gì nếu đang load
+        if (song?.id === currentSong?.id && sound) {
+             // Nếu cùng bài hát, chỉ Play/Pause
+            handlePlayPause();
+            return;
+        }
 
-      } catch (error) {
-          console.error("!!!!!!!!!! LỖI KHI TUA NHẠC (seekTo) !!!!!!!!!!", error);
-          // Log lỗi chi tiết hơn
-          if (error.code) console.error("Seek Error Code:", error.code);
-          if (error.message) console.error("Seek Error Message:", error.message);
-          // Cân nhắc hiển thị thông báo lỗi
-          // Alert.alert("Lỗi", "Không thể tua nhạc.");
-      }
-  };
-  // --- KẾT THÚC seekTo ---
+        isPlayerLoading.current = true;
+        setIsLoading(true);
+        console.log("Đang tải bài hát:", song.title);
 
-  const playNext = async () => {
-      if (currentSongIndex === null) { console.log("playNext: No current song index"); return; }
-      if (playbackOrder.length === 0) { console.log("playNext: playbackOrder is empty"); return; }
-      // Không cần kiểm tra sound ở đây vì playTrack sẽ tạo mới
-      console.log("playNext called");
-
-      const currentOrderIndex = playbackOrder.indexOf(currentSongIndex);
-      let nextOrderIndex = currentOrderIndex + 1;
-      if (nextOrderIndex >= playbackOrder.length) {
-          if (repeatMode === 'all') nextOrderIndex = 0;
-          else {
-              console.log("playNext: End of list, stopping.");
-              setIsPlaying(false);
-              // Chỉ dừng sound nếu nó đang tồn tại và đã load
-              if (sound) {
-                   try {
-                       const status = await sound.getStatusAsync();
-                       if(status.isLoaded){ await sound.pauseAsync(); await sound.setPositionAsync(0); }
-                   } catch (error) { console.error("Error stopping at end:", error); }
-              }
-              return;
-          }
-      }
-       if (nextOrderIndex < 0 || nextOrderIndex >= playbackOrder.length) { console.error("playNext: Invalid nextOrderIndex", nextOrderIndex); return; }
-      const nextSongIndex = playbackOrder[nextOrderIndex];
-      console.log(`playNext: Playing index ${nextSongIndex}`);
-      await playTrack(nextSongIndex);
-  };
-
-  const playPrevious = async () => {
-      if (currentSongIndex === null) { console.log("playPrevious: No current song index"); return; }
-       if (playbackOrder.length === 0) { console.log("playPrevious: playbackOrder is empty"); return; }
-      // Không cần kiểm tra sound ở đây
-      console.log("playPrevious called");
-
-      // Kiểm tra sound trước khi dùng positionMillis
-      if (sound && positionMillis > 3000) {
-          console.log("playPrevious: Seeking to 0");
-          await seekTo(0);
-          return;
-      }
-
-      const currentOrderIndex = playbackOrder.indexOf(currentSongIndex);
-      let prevOrderIndex = currentOrderIndex - 1;
-      if (prevOrderIndex < 0) {
-          if (repeatMode === 'all') prevOrderIndex = playbackOrder.length - 1;
-          else {
-              console.log("playPrevious: At start, seeking to 0");
-              if (sound) await seekTo(0); // Chỉ seek nếu có sound
-              return;
-          }
-      }
-       if (prevOrderIndex < 0 || prevOrderIndex >= playbackOrder.length) { console.error("playPrevious: Invalid prevOrderIndex", prevOrderIndex); return; }
-      const prevSongIndex = playbackOrder[prevOrderIndex];
-      console.log(`playPrevious: Playing index ${prevSongIndex}`);
-      await playTrack(prevSongIndex);
-  };
-
-  const toggleShuffle = () => { setIsShuffle(prev => !prev); console.log("Shuffle toggled:", !isShuffle); };
-
-  const toggleRepeatMode = async () => {
-     const nextMode = ((prev) => {
-        if (prev === 'off') return 'all';
-        if (prev === 'all') return 'one';
-        return 'off';
-     })(repeatMode);
-     console.log("Repeat mode toggled to:", nextMode);
-     if (sound) {
         try {
-            const status = await sound.getStatusAsync();
-            if(status.isLoaded){ await sound.setIsLoopingAsync(nextMode === 'one'); }
+            if (sound) {
+                await sound.unloadAsync();
+            }
+
+            // *** SỬA ĐỔI QUAN TRỌNG ***
+            // Thay song.url thành song.trackUrl
+            const { sound: newSound, status } = await Audio.Sound.createAsync(
+                song.trackUrl, // <-- SỬA Ở ĐÂY
+                { shouldPlay: true, progressUpdateIntervalMillis: 500 }
+            );
+            // *** KẾT THÚC SỬA ĐỔI ***
+
+            setSound(newSound);
+            setCurrentSong(song);
+            setIsPlaying(true);
+            setPlaybackStatus(status); // Cập nhật status ban đầu
+            newSound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+
+            if (queue) {
+                setCurrentQueue(queue);
+                setOriginalQueue(queue);
+                 if (isShuffle) {
+                    // Nếu shuffle đang bật, xáo trộn queue mới
+                    const shuffled = [...queue].sort(() => Math.random() - 0.5);
+                    const currentSongIndex = shuffled.findIndex(s => s.id === song.id);
+                    if (currentSongIndex > -1) {
+                        const [current] = shuffled.splice(currentSongIndex, 1);
+                        shuffled.unshift(current);
+                    }
+                    setCurrentQueue(shuffled);
+                 } else {
+                     setCurrentQueue(queue);
+                 }
+            }
+
+        } catch (error) {
+            console.error("Lỗi khi tải bài hát:", error);
+            setIsPlaying(false);
+            setCurrentSong(null);
+        } finally {
+            setIsLoading(false);
+            isPlayerLoading.current = false;
         }
-        catch (error) { console.error("Error setting looping:", error); }
-     }
-     setRepeatMode(nextMode);
-  };
+    };
+    
+    const onPlaybackStatusUpdate = (status) => {
+        setPlaybackStatus(status);
+        if (status.isLoaded) {
+            setIsPlaying(status.isPlaying);
+            if (status.didJustFinish && !status.isLooping) {
+                handleSongEnd();
+            }
+        } else {
+            if (status.error) {
+                console.error(`Lỗi phát nhạc: ${status.error}`);
+                setIsPlaying(false);
+            }
+        }
+    };
 
-  // --- Sleep Timer Functions ---
-  const clearSleepTimer = () => { if (sleepTimerId) { clearTimeout(sleepTimerId); setSleepTimerId(null); console.log('Đã hủy Hẹn giờ ngủ'); } };
-  const setSleepTimer = (minutes) => {
-    clearSleepTimer();
-    const milliseconds = minutes * 60 * 1000;
-    console.log(`Đặt Hẹn giờ ngủ trong ${minutes} phút.`);
-    const timerId = setTimeout(() => {
-      console.log('Sleep timer expired. Checking playback status...');
-      if (isPlaying) { // Dùng state isPlaying đã được cập nhật
-         console.log('Pausing due to sleep timer.');
-         handlePlayPause();
-      } else {
-          console.log('Sleep timer expired, but already paused.');
-      }
-      setSleepTimerId(null);
-    }, milliseconds);
-    setSleepTimerId(timerId);
-  };
+    const handleSongEnd = () => {
+        console.log("Bài hát kết thúc, repeatMode:", repeatMode);
+        if (repeatMode === 'one') {
+            sound.replayAsync();
+        } else if (repeatMode === 'all') {
+            playNext(true); // true = forceNext (luôn phát bài tiếp theo, kể cả shuffle)
+        } else if (isShuffle) {
+             playNext(false); // Phát ngẫu nhiên
+        } else {
+            // Chế độ 'off' và không shuffle
+            const currentIndex = currentQueue.findIndex(s => s.id === currentSong.id);
+            if (currentIndex < currentQueue.length - 1) {
+                playNext(false);
+            } else {
+                // Đã hết queue, dừng nhạc
+                setIsPlaying(false);
+                sound.setPositionAsync(0);
+                sound.pauseAsync();
+            }
+        }
+    };
 
-  // --- Context Value ---
-  const value = {
-    sound, isPlaying, positionMillis, durationMillis,
-    currentSong, // <-- Dùng state currentSong
-    formatTime,
-    playTrack,
-    handlePlayPause, seekTo, playNext, playPrevious,
-    repeatMode, isShuffle, toggleRepeatMode, toggleShuffle,
-    sleepTimerId, setSleepTimer, clearSleepTimer,
-    isLoading,
-  };
+     const handlePlayPause = async () => {
+        if (isLoading) return;
+        if (sound) {
+            if (isPlaying) {
+                await sound.pauseAsync();
+            } else {
+                await sound.playAsync();
+            }
+            setIsPlaying(!isPlaying);
+        } else if (currentSong) {
+             // Nếu chưa có sound nhưng có currentSong (ví dụ: mở lại app)
+            playSong(currentSong);
+        }
+    };
 
-  return (
-    <AudioContext.Provider value={value}>
-      {children}
-    </AudioContext.Provider>
-  );
+     const seekTo = async (position) => {
+        if (sound) {
+            try {
+                await sound.setPositionAsync(position);
+            } catch (e) {
+                console.error("Lỗi khi tua:", e);
+            }
+        }
+    };
+
+    const formatTime = (millis) => {
+        if (!millis || millis < 0) return '0:00';
+        const totalSeconds = Math.floor(millis / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    };
+
+     const playNext = (forceNext = false) => {
+         if (!currentSong || (currentQueue.length <= 1 && !forceNext)) return;
+
+        let currentIndex = currentQueue.findIndex(s => s.id === currentSong.id);
+        let nextIndex;
+
+        if (isShuffle && !forceNext) {
+            nextIndex = Math.floor(Math.random() * currentQueue.length);
+             // Đảm bảo không lặp lại bài cũ
+            if (nextIndex === currentIndex && currentQueue.length > 1) {
+                 nextIndex = (currentIndex + 1) % currentQueue.length;
+            }
+        } else {
+            nextIndex = (currentIndex + 1) % currentQueue.length;
+        }
+        
+        if (currentQueue[nextIndex]) {
+            playSong(currentQueue[nextIndex]);
+        }
+    };
+
+    const playPrevious = () => {
+         if (!currentSong || currentQueue.length <= 1) return;
+
+        let currentIndex = currentQueue.findIndex(s => s.id === currentSong.id);
+        let prevIndex;
+
+        if (isShuffle) {
+            prevIndex = Math.floor(Math.random() * currentQueue.length);
+            if (prevIndex === currentIndex && currentQueue.length > 1) {
+                 prevIndex = (currentIndex - 1 + currentQueue.length) % currentQueue.length;
+            }
+        } else {
+            prevIndex = (currentIndex - 1 + currentQueue.length) % currentQueue.length;
+        }
+        
+        if (currentQueue[prevIndex]) {
+            playSong(currentQueue[prevIndex]);
+        }
+    };
+
+    const toggleShuffle = () => {
+        const newShuffleState = !isShuffle;
+        setIsShuffle(newShuffleState);
+        if (newShuffleState) {
+            // Xáo trộn queue
+            const shuffled = [...originalQueue].sort(() => Math.random() - 0.5);
+            // Đảm bảo bài hát hiện tại vẫn ở đầu
+            const currentSongIndex = shuffled.findIndex(s => s.id === currentSong?.id);
+            if (currentSongIndex > -1) {
+                const [current] = shuffled.splice(currentSongIndex, 1);
+                shuffled.unshift(current);
+            }
+            setCurrentQueue(shuffled);
+        } else {
+            // Quay lại queue gốc (giữ nguyên thứ tự bài hát hiện tại)
+            const currentIndexInOriginal = originalQueue.findIndex(s => s.id === currentSong?.id);
+            if (currentIndexInOriginal > -1) {
+                 // Đặt bài hát hiện tại làm mốc
+                 const reordered = [
+                     ...originalQueue.slice(currentIndexInOriginal),
+                     ...originalQueue.slice(0, currentIndexInOriginal)
+                 ];
+                 // Cập nhật lại originalQueue để giữ đúng thứ tự khi play next
+                 setOriginalQueue(reordered);
+                 setCurrentQueue(reordered);
+            } else {
+                 setCurrentQueue(originalQueue);
+            }
+        }
+    };
+
+    const toggleRepeatMode = () => {
+        if (repeatMode === 'off') setRepeatMode('all');
+        else if (repeatMode === 'all') setRepeatMode('one');
+        else setRepeatMode('off');
+    };
+
+    const setSleepTimer = (duration) => {
+        clearSleepTimer(); // Xóa timer cũ nếu có
+        console.log(`Hẹn giờ tắt nhạc trong ${duration} ms`);
+        const timerId = setTimeout(() => {
+            if (sound && isPlaying) {
+                sound.pauseAsync();
+                setIsPlaying(false);
+            }
+            setSleepTimerId(null);
+             console.log("Đã tắt nhạc theo hẹn giờ.");
+        }, duration);
+        setSleepTimerId(timerId);
+    };
+
+    const clearSleepTimer = () => {
+        if (sleepTimerId) {
+            clearTimeout(sleepTimerId);
+            setSleepTimerId(null);
+            console.log("Đã hủy hẹn giờ.");
+        }
+    };
+
+    const value = {
+        sound,
+        currentSong,
+        isPlaying,
+        playbackStatus,
+        currentQueue,
+        isLoading,
+        isShuffle,
+        repeatMode,
+        sleepTimerId,
+        positionMillis: playbackStatus?.positionMillis || 0,
+        durationMillis: playbackStatus?.durationMillis || 0,
+        playSong,
+        handlePlayPause,
+        seekTo,
+        playNext,
+        playPrevious,
+        formatTime,
+        toggleShuffle,
+        toggleRepeatMode,
+        setSleepTimer,
+        clearSleepTimer,
+    };
+
+    return (
+        <AudioContext.Provider value={value}>
+            {children}
+        </AudioContext.Provider>
+    );
+};
+
+export const useAudioPlayer = () => {
+    return useContext(AudioContext);
 };

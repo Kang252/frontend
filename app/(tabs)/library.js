@@ -1,158 +1,111 @@
 // frontend/app/(tabs)/library.js
-import React, { useMemo } from 'react';
-import { 
-  View, Text, StyleSheet, 
-  FlatList, 
-  Pressable, Alert 
-} from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFavorites } from '../../src/context/FavoritesContext';
-import { getMockSongs } from '../../src/data/songs';
-import SongItem from '../../src/components/SongItem';
 import { usePlaylists } from '../../src/context/PlaylistsContext';
+import { useAudioPlayer } from '../../src/hooks/useAudioPlayer';
+import SongItem from '../../src/components/SongItem';
+import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+// import MiniPlayer from '../../src/components/MiniPlayer'; // <-- KHÔNG CẦN IMPORT NỮA
 
 export default function LibraryScreen() {
-  const { favoriteIDs } = useFavorites();
-  const { playlists, createPlaylist } = usePlaylists();
-  const allSongs = getMockSongs();
-  const router = useRouter();
+    const { favorites } = useFavorites();
+    const { playlists } = usePlaylists();
+    const { playSong } = useAudioPlayer();
 
-  const favoriteSongs = useMemo(() => {
-    return allSongs.filter(song => favoriteIDs.has(song.id));
-  }, [allSongs, favoriteIDs]);
+    const favoriteList = favorites || [];
+    const playlistList = playlists || [];
 
-  const handleCreatePlaylist = () => {
-    Alert.prompt(
-      "Tạo Playlist Mới", "Nhập tên cho playlist của bạn:",
-      [{ text: "Hủy", style: "cancel" }, { text: "Tạo", onPress: (name) => createPlaylist(name) }],
-      "plain-text"
-    );
-  };
+    const handlePlayFavorite = (track) => {
+        playSong(track, favoriteList);
+    };
 
-  const openPlaylistDetails = (playlistId) => {
-    if (!playlistId) return; // Kiểm tra an toàn
-    router.push(`/playlist/${playlistId}`);
-  };
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.headerContainer}>
-        <Text style={styles.header}>Thư viện</Text>
-        <Pressable onPress={handleCreatePlaylist} style={styles.iconButton}>
-          <Ionicons name="add" size={30} color="#1DB954" />
-        </Pressable>
-      </View>
-      
-      <Text style={styles.subHeader}>Bài hát Yêu thích ({favoriteSongs.length})</Text>
-      {favoriteSongs.length > 0 ? (
-        <FlatList
-          data={favoriteSongs}
-          renderItem={({ item }) => (
-            <SongItem
-              track={item}
-              index={allSongs.findIndex(song => song.id === item.id)}
-            />
-          )}
-          keyExtractor={(item) => item.id}
-          style={styles.listStyle} 
-        />
-      ) : (
-        <Text style={styles.emptyText}>Chưa có bài hát yêu thích.</Text>
-      )}
-
-      <Text style={styles.subHeader}>Playlists ({playlists.length})</Text>
-      {playlists.length > 0 ? (
-        <FlatList
-          data={playlists}
-          renderItem={({ item }) => {
-            // Nếu item bị null, không render gì cả
-            if (!item) return null; 
+    const renderHeader = () => (
+        <View>
+            <Text style={styles.header}>Thư viện</Text>
             
-            return (
-              <Pressable 
-                style={styles.playlistItem}
-                onPress={() => openPlaylistDetails(item.id)}
-              >
-                <Ionicons name="musical-notes" size={24} color="gray" />
-                <View style={styles.playlistInfo}>
-                  <Text style={styles.playlistName}>{item.name}</Text>
-                  <Text style={styles.playlistCount}>{(item.songIDs || []).length} bài hát</Text>
-                </View>
-              </Pressable>
-            );
-          }}
-          // SỬA LỖI: keyExtractor an toàn (safe)
-          keyExtractor={(item, index) => item?.id || `playlist-fallback-${index}`}
-          style={styles.listStyle}
-        />
-      ) : (
-        <Text style={styles.emptyText}>Chưa có playlist nào.</Text>
-      )}
+            <Link href="/playlist/favorites" asChild>
+                <Pressable style={styles.menuItem}>
+                    <Ionicons name="heart" size={28} color="#1DB954" />
+                    <Text style={styles.menuText}>Bài hát đã thích</Text>
+                    <Text style={styles.menuSubText}>{favoriteList.length} bài</Text>
+                </Pressable>
+            </Link>
 
-    </SafeAreaView>
-  );
+            <Text style={styles.subHeader}>Playlists</Text>
+            {playlistList.map(playlist => (
+                <Link href={`/playlist/${playlist.id}`} key={playlist.id} asChild>
+                    <Pressable style={styles.menuItem}>
+                        <Ionicons name="list" size={28} color="#fff" />
+                        <Text style={styles.menuText}>{playlist.name}</Text>
+                        <Text style={styles.menuSubText}>{playlist.songs.length} bài</Text>
+                    </Pressable>
+                </Link>
+            ))}
+
+             <Text style={styles.subHeader}>Yêu thích gần đây</Text>
+        </View>
+    );
+
+    return (
+        <SafeAreaView style={styles.container}>
+            <FlatList
+                data={favoriteList.slice(0, 10)}
+                ListHeaderComponent={renderHeader}
+                renderItem={({ item }) => (
+                    <SongItem
+                        item={item}
+                        onPlayPress={() => handlePlayFavorite(item)}
+                        queue={favoriteList}
+                    />
+                )}
+                keyExtractor={(item) => item.id}
+                // Giữ lại ListFooterComponent để nội dung cuối không bị che
+                ListFooterComponent={<View style={{ height: 60 }} />}
+            />
+            {/* <MiniPlayer /> */} {/* <-- XÓA DÒNG NÀY */}
+        </SafeAreaView>
+    );
 }
 
-// (Styles không đổi)
+// (Giữ nguyên styles)
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#121212',
-  },
-  headerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 20,
-    paddingTop: 40,
-  },
-  header: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  iconButton: {
-    padding: 5,
-  },
-  subHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-    paddingHorizontal: 20,
-    marginTop: 10,
-    marginBottom: 10,
-  },
-  listStyle: {
-    maxHeight: '40%',
-    flexGrow: 0,
-  },
-  emptyText: {
-    color: 'gray',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 10,
-  },
-  playlistItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-  },
-  playlistInfo: {
-    marginLeft: 15,
-  },
-  playlistName: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  playlistCount: {
-    color: 'gray',
-    fontSize: 14,
-    marginTop: 3,
-  },
+    container: {
+        flex: 1,
+        backgroundColor: '#121212',
+    },
+    header: {
+        fontSize: 28,
+        fontWeight: 'bold',
+        color: 'white',
+        padding: 15,
+    },
+    subHeader: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: 'white',
+        paddingHorizontal: 15,
+        marginTop: 20,
+        marginBottom: 10,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 15,
+        paddingHorizontal: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#222',
+    },
+    menuText: {
+        color: 'white',
+        fontSize: 18,
+        marginLeft: 15,
+    },
+    menuSubText: {
+        color: 'gray',
+        fontSize: 16,
+        marginLeft: 'auto',
+    }
 });
